@@ -16,10 +16,10 @@ interface SwipeDeckProps {
   currentIndex: number;
   onIndexChange: (index: number) => void;
   favoritesCount: number;
+  restaurants: Restaurant[];
 }
 
-export function SwipeDeck({ onMatch, onSkip, onFiltersClick, onFavoritesClick, onViewDetails, onProfileClick, userFilters, currentIndex, onIndexChange, favoritesCount }: SwipeDeckProps) {
-  const [restaurants, setRestaurants] = useState<Restaurant[]>(mockRestaurants);
+export function SwipeDeck({ onMatch, onSkip, onFiltersClick, onFavoritesClick, onViewDetails, onProfileClick, userFilters, currentIndex, onIndexChange, favoritesCount, restaurants }: SwipeDeckProps) {
   const [swipeDirection, setSwipeDirection] = useState<'left' | 'right' | null>(null);
   const [isAnimating, setIsAnimating] = useState(false);
 

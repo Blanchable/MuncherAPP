@@ -18,6 +18,9 @@ import { ForgotPassword } from "./components/ForgotPassword";
 import { ForgotPasswordConfirmation } from "./components/ForgotPasswordConfirmation";
 import { Restaurant } from "./data/mockRestaurants";
 import { authService, User } from "./utils/supabase/client";
+import { googlePlacesService, Location, PlacesSearchParams } from "./utils/googlePlaces";
+import { locationService, LocationResult } from "./utils/locationService";
+import { securityService } from "./utils/securityService";
 
 type Screen = 'intro' | 'login' | 'signup' | 'profile' | 'forgot-password' | 'forgot-password-confirmation' | 'location' | 'zip-code' | 'filter-prompt' | 'filter-setup' | 'ready-to-swipe' | 'swipe-deck' | 'match-detail' | 'favorites';
 
@@ -32,7 +35,7 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [userFilters, setUserFilters] = useState<FilterState | null>(null);
-  const [userLocation, setUserLocation] = useState<{ type: 'gps' | 'zipcode'; value: string } | null>(null);
+  const [userLocation, setUserLocation] = useState<{ type: 'gps' | 'zipcode'; value: string; coordinates?: Location } | null>(null);
   const [matches, setMatches] = useState<Restaurant[]>([]);
   const [favorites, setFavorites] = useState<Restaurant[]>([]);
   const [skipped, setSkipped] = useState<Restaurant[]>([]);
@@ -41,7 +44,7 @@ export default function App() {
   const [currentSwipeIndex, setCurrentSwipeIndex] = useState(0);
   const [resetPasswordEmail, setResetPasswordEmail] = useState('');
 
-  // Initialize auth state
+  // Initialize auth state and load secure data
   useEffect(() => {
     let mounted = true;
     let wasAuthenticated = false;
@@ -54,6 +57,16 @@ export default function App() {
           const currentUser = await authService.getCurrentUser();
           setUser(currentUser);
           wasAuthenticated = true;
+          
+          // Load favorites from secure storage
+          try {
+            const storedFavorites = await securityService.secureRetrieve('favorites');
+            if (storedFavorites && Array.isArray(storedFavorites)) {
+              setFavorites(storedFavorites);
+            }
+          } catch (error) {
+            console.error('Error loading favorites:', error);
+          }
         }
       } catch (error) {
         console.error('Auth initialization error:', error);
@@ -93,11 +106,48 @@ export default function App() {
     setCurrentScreen('location');
   };
 
-  const handleLocationAllow = () => {
-    // In a real app, this would request location permission
-    console.log("Requesting location permission...");
-    setUserLocation({ type: 'gps', value: 'current-location' });
-    setCurrentScreen('filter-prompt');
+  const handleLocationAllow = async () => {
+    try {
+      console.log("Requesting location permission...");
+      
+      // Check if device is secure
+      const isSecure = await securityService.isDeviceSecure();
+      if (!isSecure) {
+        console.warn('Device security check failed');
+      }
+
+      // Get current location
+      const locationResult: LocationResult = await locationService.getCurrentLocation();
+      
+      if (locationResult.success && locationResult.location) {
+        // Anonymize location for security
+        const anonymizedLocation = securityService.anonymizeLocation(
+          locationResult.location.latitude,
+          locationResult.location.longitude
+        );
+        
+        setUserLocation({ 
+          type: 'gps', 
+          value: 'current-location',
+          coordinates: anonymizedLocation
+        });
+        
+        // Log security event
+        securityService.logSecurityEvent('location_permission_granted', {
+          locationType: 'gps',
+          anonymized: anonymizedLocation
+        });
+        
+        setCurrentScreen('filter-prompt');
+      } else {
+        console.error('Location permission denied or failed:', locationResult.error);
+        // Fallback to zip code entry
+        setCurrentScreen('zip-code');
+      }
+    } catch (error) {
+      console.error('Error getting location:', error);
+      setCurrentScreen('zip-code');
+    }
   };
 
   const handleLocationSkip = () => {
@@ -105,10 +155,44 @@ export default function App() {
     setCurrentScreen('zip-code');
   };
 
-  const handleZipCodeContinue = (zipCode: string) => {
-    console.log("Using zip code:", zipCode);
-    setUserLocation({ type: 'zipcode', value: zipCode });
-    setCurrentScreen('filter-prompt');
+  const handleZipCodeContinue = async (zipCode: string) => {
+    try {
+      console.log("Using zip code:", zipCode);
+      
+      // Sanitize input
+      const sanitizedZipCode = securityService.sanitizeInput(zipCode);
+      
+      // Geocode zip code
+      const geocodeResult = await locationService.geocodeZipCode(sanitizedZipCode);
+      
+      if (geocodeResult.success && geocodeResult.location) {
+        // Anonymize location for security
+        const anonymizedLocation = securityService.anonymizeLocation(
+          geocodeResult.location.latitude,
+          geocodeResult.location.longitude
+        );
+        
+        setUserLocation({ 
+          type: 'zipcode', 
+          value: sanitizedZipCode,
+          coordinates: anonymizedLocation
+        });
+        
+        // Log security event
+        securityService.logSecurityEvent('location_zipcode_used', {
+          locationType: 'zipcode',
+          anonymized: anonymizedLocation
+        });
+        
+        setCurrentScreen('filter-prompt');
+      } else {
+        console.error('Failed to geocode zip code:', geocodeResult.error);
+        toast.error('Invalid zip code. Please try again.');
+      }
+    } catch (error) {
+      console.error('Error processing zip code:', error);
+      toast.error('Error processing zip code. Please try again.');
+    }
   };
 
   const handleZipCodeBack = () => {
@@ -137,9 +221,69 @@ export default function App() {
     setCurrentScreen('ready-to-swipe');
   };
 
-  const handleStartSwiping = () => {
-    console.log("Starting swipe interface...");
-    setCurrentScreen('swipe-deck');
+  const handleStartSwiping = async () => {
+    try {
+      console.log("Starting swipe interface...");
+      
+      // Check rate limiting
+      if (securityService.isRateLimited('restaurant_search', 5, 60000)) {
+        toast.error('Too many requests. Please wait a moment.');
+        return;
+      }
+      
+      if (!userLocation?.coordinates) {
+        console.error('No location available');
+        toast.error('Location is required to find restaurants.');
+        return;
+      }
+      
+      // Build search parameters
+      const searchParams: PlacesSearchParams = {
+        location: userLocation.coordinates,
+        radius: userFilters?.distance ? userFilters.distance * 1609.34 : 5000, // Convert miles to meters
+        type: 'restaurant',
+        openNow: true,
+      };
+      
+      // Add cuisine filters if specified
+      if (userFilters?.cuisines && userFilters.cuisines.length > 0) {
+        searchParams.keyword = userFilters.cuisines.join(' ');
+      }
+      
+      // Add price filters
+      if (userFilters) {
+        const priceMap = { '$': 0, '$$': 1, '$$$': 2, '$$$$': 3 };
+        const prices = userFilters.cuisines?.map(c => priceMap[c as keyof typeof priceMap]).filter(Boolean) || [];
+        if (prices.length > 0) {
+          searchParams.minPrice = Math.min(...prices);
+          searchParams.maxPrice = Math.max(...prices);
+        }
+      }
+      
+      // Search for restaurants
+      const restaurants = await googlePlacesService.searchNearbyRestaurants(searchParams);
+      
+      if (restaurants.length > 0) {
+        setMatches(restaurants);
+        setCurrentSwipeIndex(0);
+        
+        // Log security event
+        securityService.logSecurityEvent('restaurant_search_completed', {
+          count: restaurants.length,
+          location: securityService.anonymizeLocation(
+            userLocation.coordinates.latitude,
+            userLocation.coordinates.longitude
+          )
+        });
+        
+        setCurrentScreen('swipe-deck');
+      } else {
+        toast.error('No restaurants found nearby. Try adjusting your filters.');
+      }
+    } catch (error) {
+      console.error('Error starting swipe interface:', error);
+      toast.error('Error loading restaurants. Please try again.');
+    }
   };
 
   const handleEditPreferences = () => {
@@ -147,8 +291,15 @@ export default function App() {
     setCurrentScreen('filter-setup');
   };
 
-  const handleMatch = (restaurant: Restaurant) => {
+  const handleMatch = async (restaurant: Restaurant) => {
     console.log("Saved:", restaurant.name);
+    
+    // Validate restaurant data
+    if (!securityService.validateApiResponse(restaurant)) {
+      console.error('Invalid restaurant data');
+      return;
+    }
+    
     // Add to favorites when swiping right
     setFavorites(prev => {
       const isAlreadyFavorite = prev.find(fav => fav.id === restaurant.id);
@@ -158,7 +309,18 @@ export default function App() {
           description: restaurant.name,
           duration: 1500,
         });
-        return [...prev, restaurant];
+        
+        // Securely store favorites
+        const newFavorites = [...prev, restaurant];
+        securityService.secureStore('favorites', newFavorites).catch(console.error);
+        
+        // Log security event
+        securityService.logSecurityEvent('restaurant_favorited', {
+          restaurantId: restaurant.id,
+          restaurantName: restaurant.name
+        });
+        
+        return newFavorites;
       }
       return prev;
     });
@@ -243,17 +405,36 @@ export default function App() {
     setCurrentScreen('location');
   };
 
-  const handleLogout = () => {
-    console.log("User logged out");
-    setUser(null);
-    setCurrentScreen('intro');
-    // Reset app state
-    setUserFilters(null);
-    setUserLocation(null);
-    setFavorites([]);
-    setSkipped([]);
-    setCurrentSwipeIndex(0);
-    setResetPasswordEmail('');
+  const handleLogout = async () => {
+    try {
+      console.log("User logged out");
+      
+      // Log security event
+      securityService.logSecurityEvent('user_logout', {
+        userId: user?.id
+      });
+      
+      // Clear all secure data
+      await securityService.clearAllSecureData();
+      
+      // Sign out from Supabase
+      await authService.signOut();
+      
+      setUser(null);
+      setCurrentScreen('intro');
+      // Reset app state
+      setUserFilters(null);
+      setUserLocation(null);
+      setFavorites([]);
+      setSkipped([]);
+      setCurrentSwipeIndex(0);
+      setResetPasswordEmail('');
+    } catch (error) {
+      console.error('Error during logout:', error);
+      // Still reset the app state even if logout fails
+      setUser(null);
+      setCurrentScreen('intro');
+    }
   };
 
   const handleBackFromAuth = () => {
@@ -447,6 +628,7 @@ export default function App() {
             currentIndex={currentSwipeIndex}
             onIndexChange={setCurrentSwipeIndex}
             favoritesCount={favorites.length}
+            restaurants={matches}
           />
         );
 

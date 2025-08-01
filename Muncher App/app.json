@@ -1,0 +1,56 @@
+{
+  "expo": {
+    "name": "Muncher",
+    "slug": "muncher-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.muncher.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Muncher needs access to your location to find restaurants near you.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Muncher needs access to your location to find restaurants near you.",
+        "NSCameraUsageDescription": "Muncher needs access to your camera to take photos of your food.",
+        "NSPhotoLibraryUsageDescription": "Muncher needs access to your photo library to save restaurant photos."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "package": "com.muncher.app",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-location",
+      "expo-camera",
+      "expo-media-library"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "your-project-id"
+      }
+    }
+  }
+}
