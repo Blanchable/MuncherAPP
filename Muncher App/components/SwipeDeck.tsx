@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion, useMotionValue, useTransform, PanInfo, AnimatePresence } from "framer-motion";
-import { X, Heart, RotateCcw, Sliders, User } from "lucide-react";
+import { X, Heart, RotateCcw, Sliders, User, RefreshCw, AlertCircle } from "lucide-react";
 import { Button } from "./ui/button";
 import { RestaurantCard } from "./RestaurantCard";
 import { Restaurant, mockRestaurants } from "../data/mockRestaurants";
@@ -16,10 +16,36 @@ interface SwipeDeckProps {
   currentIndex: number;
   onIndexChange: (index: number) => void;
   favoritesCount: number;
+  restaurants?: Restaurant[];
+  isLoading?: boolean;
+  searchError?: string | null;
+  onRetrySearch?: () => void;
 }
 
-export function SwipeDeck({ onMatch, onSkip, onFiltersClick, onFavoritesClick, onViewDetails, onProfileClick, userFilters, currentIndex, onIndexChange, favoritesCount }: SwipeDeckProps) {
-  const [restaurants, setRestaurants] = useState<Restaurant[]>(mockRestaurants);
+export function SwipeDeck({ 
+  onMatch, 
+  onSkip, 
+  onFiltersClick, 
+  onFavoritesClick, 
+  onViewDetails, 
+  onProfileClick, 
+  userFilters, 
+  currentIndex, 
+  onIndexChange, 
+  favoritesCount,
+  restaurants: propRestaurants,
+  isLoading,
+  searchError,
+  onRetrySearch
+}: SwipeDeckProps) {
+  const [restaurants, setRestaurants] = useState<Restaurant[]>(propRestaurants || mockRestaurants);
+
+  // Update restaurants when prop changes
+  useEffect(() => {
+    if (propRestaurants) {
+      setRestaurants(propRestaurants);
+    }
+  }, [propRestaurants]);
   const [swipeDirection, setSwipeDirection] = useState<'left' | 'right' | null>(null);
   const [isAnimating, setIsAnimating] = useState(false);
 
@@ -143,6 +169,123 @@ export function SwipeDeck({ onMatch, onSkip, onFiltersClick, onFavoritesClick, o
   };
 
 
+
+  // Loading state
+  if (isLoading) {
+    return (
+      <div className="flex-1 flex flex-col">
+        {/* Header */}
+        <div className="grid grid-cols-3 items-center p-6">
+          <div className="flex justify-start">
+            <button onClick={onFiltersClick}>
+              <Sliders className="w-6 h-6 text-foreground" />
+            </button>
+          </div>
+          <div className="flex justify-center">
+            <h1 className="text-xl font-semibold text-primary">Muncher</h1>
+          </div>
+          <div className="flex items-center justify-end space-x-4">
+            <button onClick={onFavoritesClick} className="relative">
+              <Heart className={`w-6 h-6 text-foreground ${favoritesCount > 0 ? 'fill-red-500 text-red-500' : ''}`} />
+              {favoritesCount > 0 && (
+                <div className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-medium">
+                  {favoritesCount > 99 ? '99+' : favoritesCount}
+                </div>
+              )}
+            </button>
+            <button 
+              onClick={onProfileClick}
+              className="w-8 h-8 bg-muted rounded-full flex items-center justify-center hover:bg-muted/80 transition-colors"
+            >
+              <User className="w-6 h-6 text-foreground" />
+            </button>
+          </div>
+        </div>
+
+        {/* Loading content */}
+        <div className="flex-1 flex flex-col items-center justify-center px-8 space-y-6">
+          <div className="text-center space-y-4">
+            <RefreshCw className="w-12 h-12 text-primary animate-spin mx-auto" />
+            <h2 className="text-2xl font-semibold text-foreground">
+              Finding restaurants...
+            </h2>
+            <p className="text-lg text-muted-foreground">
+              We're searching for great places near you
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Error state
+  if (searchError) {
+    return (
+      <div className="flex-1 flex flex-col">
+        {/* Header */}
+        <div className="grid grid-cols-3 items-center p-6">
+          <div className="flex justify-start">
+            <button onClick={onFiltersClick}>
+              <Sliders className="w-6 h-6 text-foreground" />
+            </button>
+          </div>
+          <div className="flex justify-center">
+            <h1 className="text-xl font-semibold text-primary">Muncher</h1>
+          </div>
+          <div className="flex items-center justify-end space-x-4">
+            <button onClick={onFavoritesClick} className="relative">
+              <Heart className={`w-6 h-6 text-foreground ${favoritesCount > 0 ? 'fill-red-500 text-red-500' : ''}`} />
+              {favoritesCount > 0 && (
+                <div className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-medium">
+                  {favoritesCount > 99 ? '99+' : favoritesCount}
+                </div>
+              )}
+            </button>
+            <button 
+              onClick={onProfileClick}
+              className="w-8 h-8 bg-muted rounded-full flex items-center justify-center hover:bg-muted/80 transition-colors"
+            >
+              <User className="w-6 h-6 text-foreground" />
+            </button>
+          </div>
+        </div>
+
+        {/* Error content */}
+        <div className="flex-1 flex flex-col items-center justify-center px-8 space-y-6">
+          <div className="text-center space-y-4">
+            <AlertCircle className="w-12 h-12 text-destructive mx-auto" />
+            <h2 className="text-2xl font-semibold text-foreground">
+              Oops! Something went wrong
+            </h2>
+            <p className="text-lg text-muted-foreground">
+              {searchError}
+            </p>
+          </div>
+          
+          <div className="space-y-4 w-full max-w-sm">
+            {onRetrySearch && (
+              <Button 
+                onClick={onRetrySearch}
+                className="w-full h-14 rounded-3xl text-lg bg-primary hover:bg-primary/90 text-white"
+              >
+                <RefreshCw className="w-5 h-5 mr-2" />
+                Try Again
+              </Button>
+            )}
+            
+            <Button 
+              onClick={onFiltersClick}
+              variant="outline"
+              className="w-full h-14 rounded-3xl text-lg"
+            >
+              <Sliders className="w-5 h-5 mr-2" />
+              Adjust Filters
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (!hasMore) {
     return (
