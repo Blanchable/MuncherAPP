@@ -18,6 +18,9 @@ import { ForgotPassword } from "./components/ForgotPassword";
 import { ForgotPasswordConfirmation } from "./components/ForgotPasswordConfirmation";
 import { Restaurant } from "./data/mockRestaurants";
 import { authService, User } from "./utils/supabase/client";
+import { locationService, Location, LocationError } from "./utils/services/locationService";
+import { restaurantService, RestaurantSearchResult } from "./utils/services/restaurantService";
+import { dataProtectionService } from "./utils/security/dataProtection";
 
 type Screen = 'intro' | 'login' | 'signup' | 'profile' | 'forgot-password' | 'forgot-password-confirmation' | 'location' | 'zip-code' | 'filter-prompt' | 'filter-setup' | 'ready-to-swipe' | 'swipe-deck' | 'match-detail' | 'favorites';
 
@@ -32,7 +35,10 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [userFilters, setUserFilters] = useState<FilterState | null>(null);
-  const [userLocation, setUserLocation] = useState<{ type: 'gps' | 'zipcode'; value: string } | null>(null);
+  const [userLocation, setUserLocation] = useState<{ type: 'gps' | 'zipcode'; location: Location; value: string } | null>(null);
+  const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [isLoadingRestaurants, setIsLoadingRestaurants] = useState(false);
   const [matches, setMatches] = useState<Restaurant[]>([]);
   const [favorites, setFavorites] = useState<Restaurant[]>([]);
   const [skipped, setSkipped] = useState<Restaurant[]>([]);
@@ -93,11 +99,33 @@ export default function App() {
     setCurrentScreen('location');
   };
 
-  const handleLocationAllow = () => {
-    // In a real app, this would request location permission
+  const handleLocationAllow = async () => {
     console.log("Requesting location permission...");
-    setUserLocation({ type: 'gps', value: 'current-location' });
-    setCurrentScreen('filter-prompt');
+    setIsLoadingRestaurants(true);
+    setSearchError(null);
+    
+    try {
+      const location = await locationService.getCurrentLocation();
+      setUserLocation({ 
+        type: 'gps', 
+        location,
+        value: `${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)}` 
+      });
+      setCurrentScreen('filter-prompt');
+    } catch (error) {
+      const locationError = error as LocationError;
+      console.error("Location permission failed:", locationError);
+      setSearchError(locationError.message);
+      
+      // Show error and redirect to zip code entry
+      toast.error("Location Access Failed", {
+        description: locationError.message,
+        duration: 3000,
+      });
+      setCurrentScreen('zip-code');
+    } finally {
+      setIsLoadingRestaurants(false);
+    }
   };
 
   const handleLocationSkip = () => {
@@ -105,10 +133,44 @@ export default function App() {
     setCurrentScreen('zip-code');
   };
 
-  const handleZipCodeContinue = (zipCode: string) => {
+  const handleZipCodeContinue = async (zipCode: string) => {
     console.log("Using zip code:", zipCode);
-    setUserLocation({ type: 'zipcode', value: zipCode });
-    setCurrentScreen('filter-prompt');
+    setIsLoadingRestaurants(true);
+    setSearchError(null);
+    
+    // Validate zip code input
+    const validation = dataProtectionService.validateInput(zipCode, 'zipcode');
+    if (!validation.isValid) {
+      toast.error("Invalid Zip Code", {
+        description: validation.errors[0],
+        duration: 3000,
+      });
+      setIsLoadingRestaurants(false);
+      return;
+    }
+    
+    const sanitizedZipCode = dataProtectionService.sanitizeInput(zipCode);
+    
+    try {
+      const result = await locationService.geocodeZipCode(sanitizedZipCode);
+      setUserLocation({ 
+        type: 'zipcode', 
+        location: result.location,
+        value: sanitizedZipCode 
+      });
+      setCurrentScreen('filter-prompt');
+    } catch (error) {
+      const locationError = error as LocationError;
+      console.error("Geocoding failed:", locationError);
+      setSearchError(locationError.message);
+      
+      toast.error("Zip Code Error", {
+        description: "Could not find location for this zip code",
+        duration: 3000,
+      });
+    } finally {
+      setIsLoadingRestaurants(false);
+    }
   };
 
   const handleZipCodeBack = () => {
@@ -121,15 +183,64 @@ export default function App() {
     setCurrentScreen('filter-setup');
   };
 
-  const handleSkipFilters = () => {
+  const handleSkipFilters = async () => {
     console.log("Skipping filter setup...");
+    await loadRestaurants();
     setCurrentScreen('ready-to-swipe');
   };
 
-  const handleApplyFilters = (filters: FilterState) => {
+  const handleApplyFilters = async (filters: FilterState) => {
     console.log("Applied filters:", filters);
     setUserFilters(filters);
+    await loadRestaurants(filters);
     setCurrentScreen('ready-to-swipe');
+  };
+
+  const loadRestaurants = async (filters?: FilterState) => {
+    if (!userLocation) {
+      console.error("No user location available");
+      return;
+    }
+
+    setIsLoadingRestaurants(true);
+    setSearchError(null);
+
+    try {
+      const searchParams = {
+        location: userLocation.location,
+        radius: filters?.distance ? filters.distance * 1000 : undefined, // Convert km to meters
+        cuisines: filters?.cuisines,
+        minRating: 3.0,
+        useRealData: true // Try to use real data first
+      };
+
+      const result: RestaurantSearchResult = await restaurantService.searchRestaurants(searchParams);
+      
+      setRestaurants(result.restaurants);
+      
+      if (result.error) {
+        toast.warning("Using Sample Data", {
+          description: "Google Places API not available, showing sample restaurants",
+          duration: 3000,
+        });
+      } else if (result.source === 'google') {
+        toast.success("Restaurants Loaded", {
+          description: `Found ${result.restaurants.length} restaurants near you`,
+          duration: 2000,
+        });
+      }
+      
+    } catch (error) {
+      console.error("Failed to load restaurants:", error);
+      setSearchError(error instanceof Error ? error.message : "Failed to load restaurants");
+      
+      toast.error("Search Failed", {
+        description: "Could not find restaurants. Please try again.",
+        duration: 3000,
+      });
+    } finally {
+      setIsLoadingRestaurants(false);
+    }
   };
 
   const handleSkipFilterSetup = () => {
@@ -447,6 +558,10 @@ export default function App() {
             currentIndex={currentSwipeIndex}
             onIndexChange={setCurrentSwipeIndex}
             favoritesCount={favorites.length}
+            restaurants={restaurants}
+            isLoading={isLoadingRestaurants}
+            searchError={searchError}
+            onRetrySearch={loadRestaurants}
           />
         );
 
